@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mô hình 3D Nhà Phố 2 Tầng</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #1a1a2e; font-family: 'Segoe UI', Arial, sans-serif; }
+    canvas { display: block; }
+
+    #info {
+      position: absolute;
+      top: 16px; left: 16px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+      max-width: 230px;
+      pointer-events: none;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    #info h2 { font-size: 14px; margin-bottom: 6px; color: #87CEEB; }
+    #info p  { font-size: 11px; color: #ccc; }
+
+    #controls {
+      position: absolute;
+      top: 16px; right: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #controls button {
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s, border-color 0.2s;
+      min-width: 140px;
+      text-align: left;
+    }
+    #controls button:hover  { background: rgba(60,100,160,0.7); border-color: #87CEEB; }
+    #controls button.active { background: rgba(30,80,140,0.85); border-color: #87CEEB; color: #87CEEB; }
+
+    #legend {
+      position: absolute;
+      bottom: 16px; left: 16px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.8;
+      border: 1px solid rgba(255,255,255,0.15);
+      pointer-events: none;
+    }
+    #legend h3 { font-size: 12px; color: #87CEEB; margin-bottom: 4px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-color {
+      width: 14px; height: 14px; border-radius: 3px;
+      display: inline-block; flex-shrink: 0;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* CSS2D label style */
+    .room-label {
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      padding: 3px 7px;
+      border-radius: 5px;
+      font-size: 11px;
+      pointer-events: none;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+  </style>
+</head>
+<body>
+
+<div id="info">
+  <h2>🏠 Nhà Phố 2 Tầng</h2>
+  <p>19.2m × 5m</p>
+  <p>Tầng 1: 3.6m · Tầng 2: 3.3m</p>
+  <p style="margin-top:6px; color:#aaa">🖱 Kéo: xoay | Scroll: zoom | Phải: pan</p>
+</div>
+
+<div id="controls">
+  <button id="btn-all"    class="active" onclick="showFloor('all')"  >🏠 Toàn bộ</button>
+  <button id="btn-floor1"              onclick="showFloor('1')"   >1️⃣  Tầng 1</button>
+  <button id="btn-floor2"              onclick="showFloor('2')"   >2️⃣  Tầng 2</button>
+  <button id="btn-labels"              onclick="toggleLabels()"   >🏷  Labels</button>
+  <button id="btn-wireframe"           onclick="toggleWireframe()">📐 Wireframe</button>
+  <button id="btn-reset"               onclick="resetCamera()"    >🎯 Reset camera</button>
+</div>
+
+<div id="legend">
+  <h3>Chú thích màu</h3>
+  <div class="legend-item"><span class="legend-color" style="background:#F5F0E8"></span>Tường ngoài</div>
+  <div class="legend-item"><span class="legend-color" style="background:#CCCCCC"></span>Sàn / Mái BT</div>
+  <div class="legend-item"><span class="legend-color" style="background:#888888"></span>Móng</div>
+  <div class="legend-item"><span class="legend-color" style="background:#87CEEB;opacity:0.8"></span>Cửa sổ / Kính</div>
+  <div class="legend-item"><span class="legend-color" style="background:#B0E0FF;opacity:0.8"></span>Mái kính (Skylight)</div>
+  <div class="legend-item"><span class="legend-color" style="background:#D4C5A0"></span>Sân / Nền</div>
+</div>
+
+<!-- Three.js r128 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+
+<script>
+// ─── CONSTANTS (all in metres) ────────────────────────────────────────────────
+const WALL_T  = 0.20;   // wall thickness
+const F1H     = 3.60;   // floor 1 height
+const F2H     = 3.30;   // floor 2 height
+const SLAB_T  = 0.20;   // slab thickness
+const ROOF_T  = 0.15;   // roof slab thickness
+const FND_H   = 0.30;   // foundation height
+const BAL_OUT = 0.90;   // balcony protrusion
+const BAL_T   = 0.12;   // balcony slab thickness
+const RAIL_H  = 1.00;   // railing height
+const RAIL_T  = 0.05;   // railing bar thickness
+
+// Axis positions along X (length direction), origin at axis-6 end
+// Axis 6→5: 2.2m  | 5→4: 4.3m | 4→3: 3.5m | 3→2: 3.6m | 2→1: 5.6m
+const AX = {
+  6: 0,
+  5: 2.2,
+  4: 2.2 + 4.3,        // 6.5
+  3: 2.2 + 4.3 + 3.5,  // 10.0
+  2: 2.2 + 4.3 + 3.5 + 3.6, // 13.6
+  1: 2.2 + 4.3 + 3.5 + 3.6 + 5.6  // 19.2
+};
+const TOTAL_L = AX[1];  // 19.2
+const TOTAL_W = 5.0;    // along Z
+
+// Y origins
+const Y_FND   = 0;
+const Y_F1    = FND_H;
+const Y_SLAB2 = Y_F1 + F1H;
+const Y_F2    = Y_SLAB2 + SLAB_T;
+const Y_ROOF  = Y_F2 + F2H;
+
+// Colors
+const COL = {
+  wall:      0xF5F0E8,
+  slab:      0xCCCCCC,
+  found:     0x888888,
+  glass:     0x87CEEB,
+  skylight:  0xB0E0FF,
+  railing:   0xAAAAAA,
+  yard:      0xD4C5A0,
+  interior:  0xE8D5B0,
+  door:      0xC8A87A,
+  trim:      0xE0D8C8,
+  roofDark:  0xBBBBBB,
+};
+
+// ─── THREE.JS SETUP ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+// CSS2D renderer for labels
+const labelRenderer = new THREE.CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+document.body.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 40, 90);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+const CAM_DEFAULT = { x: TOTAL_L * 0.7, y: 14, z: 18 };
+camera.position.set(CAM_DEFAULT.x, CAM_DEFAULT.y, CAM_DEFAULT.z);
+camera.lookAt(TOTAL_L / 2, 4, 0);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor  = 0.06;
+controls.minDistance    = 3;
+controls.maxDistance    = 60;
+controls.maxPolarAngle  = Math.PI / 1.9;
+controls.target.set(TOTAL_L / 2, 4, 0);
+controls.update();
+
+// ─── LIGHTS ──────────────────────────────────────────────────────────────────
+const ambLight = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(ambLight);
+
+const sunLight = new THREE.DirectionalLight(0xfff8e7, 1.1);
+sunLight.position.set(TOTAL_L * 0.6, 20, 12);
+sunLight.castShadow = true;
+sunLight.shadow.camera.near  = 0.5;
+sunLight.shadow.camera.far   = 60;
+sunLight.shadow.camera.left  = -25;
+sunLight.shadow.camera.right =  25;
+sunLight.shadow.camera.top   =  20;
+sunLight.shadow.camera.bottom = -20;
+sunLight.shadow.mapSize.width  = 2048;
+sunLight.shadow.mapSize.height = 2048;
+sunLight.shadow.bias = -0.001;
+scene.add(sunLight);
+
+const fillLight = new THREE.DirectionalLight(0xc8dcff, 0.3);
+fillLight.position.set(-10, 8, -8);
+scene.add(fillLight);
+
+// ─── GROUPS ──────────────────────────────────────────────────────────────────
+const grpAll    = new THREE.Group(); scene.add(grpAll);
+const grpFoundYard = new THREE.Group(); grpAll.add(grpFoundYard);
+const grpFloor1 = new THREE.Group(); grpAll.add(grpFloor1);
+const grpSlab2  = new THREE.Group(); grpAll.add(grpSlab2);
+const grpFloor2 = new THREE.Group(); grpAll.add(grpFloor2);
+const grpRoof   = new THREE.Group(); grpAll.add(grpRoof);
+const grpLabels = new THREE.Group(); grpAll.add(grpLabels);
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function mat(color, opacity = 1, side = THREE.FrontSide) {
+  if (opacity < 1) {
+    return new THREE.MeshLambertMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide });
+  }
+  return new THREE.MeshLambertMaterial({ color, side });
+}
+
+function box(w, h, d, color, opacity = 1) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const mesh = new THREE.Mesh(geo, mat(color, opacity));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function addBox(group, w, h, d, color, cx, cy, cz, opacity = 1) {
+  const m = box(w, h, d, color, opacity);
+  m.position.set(cx, cy, cz);
+  group.add(m);
+  return m;
+}
+
+// ─── FLOOR / GROUND ──────────────────────────────────────────────────────────
+// Ground plane
+const groundGeo = new THREE.PlaneGeometry(60, 60);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x2d4a1e });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ─── FOUNDATION ──────────────────────────────────────────────────────────────
+addBox(grpFoundYard,
+  TOTAL_L + 0.1, FND_H, TOTAL_W + 0.1,
+  COL.found,
+  TOTAL_L / 2, FND_H / 2, 0
+);
+
+// ─── YARD SURFACES ───────────────────────────────────────────────────────────
+// Front yard slab (ground level on top of foundation)
+addBox(grpFoundYard,
+  AX[1] - AX[2], 0.05, TOTAL_W,
+  COL.yard,
+  (AX[2] + AX[1]) / 2, FND_H + 0.025, 0
+);
+
+// ─── HELPER: WALL SECTION with opening ───────────────────────────────────────
+function wallWithOpening(group, wallX, wallZ, wallLen, wallH, wallThick, openings, yBase, isZAxis, color) {
+  // openings: [{start, width, height, yOffset}] – positions along wall length
+  // sort openings
+  const ops = [...openings].sort((a, b) => a.start - b.start);
+
+  let cursor = 0;
+  for (const op of ops) {
+    // solid segment before opening
+    if (op.start > cursor + 0.01) {
+      const segLen = op.start - cursor;
+      placeWallSeg(group, wallX, wallZ, wallThick, segLen, wallH, cursor, 0, yBase, isZAxis, color);
+    }
+    // bottom fill (below door/window)
+    if (op.yOffset > 0.01) {
+      placeWallSeg(group, wallX, wallZ, wallThick, op.width, op.yOffset, op.start, 0, yBase, isZAxis, color);
+    }
+    // top fill (above door/window)
+    const topH = wallH - op.yOffset - op.height;
+    if (topH > 0.01) {
+      placeWallSeg(group, wallX, wallZ, wallThick, op.width, topH, op.start, op.yOffset + op.height, yBase, isZAxis, color);
+    }
+    // left / right jambs
+    cursor = op.start + op.width;
+  }
+  // tail segment
+  if (cursor < wallLen - 0.01) {
+    placeWallSeg(group, wallX, wallZ, wallThick, wallLen - cursor, wallH, cursor, 0, yBase, isZAxis, color);
+  }
+}
+
+function placeWallSeg(group, wallX, wallZ, wallThick, segLen, segH, segOffset, segYOff, yBase, isZAxis, color) {
+  const m = box(
+    isZAxis ? wallThick : segLen,
+    segH,
+    isZAxis ? segLen : wallThick,
+    color
+  );
+  const cy = yBase + segH / 2 + segYOff;
+  if (isZAxis) {
+    m.position.set(wallX, cy, wallZ + segOffset + segLen / 2);
+  } else {
+    m.position.set(wallX + segOffset + segLen / 2, cy, wallZ);
+  }
+  group.add(m);
+}
+
+// ─── FLOOR 1 WALLS ───────────────────────────────────────────────────────────
+/*
+  Layout axes:  X: 0(ax6)…19.2(ax1)   Z: -2.5…+2.5 (W=5m, front=+2.5, back=-2.5)
+  Front wall (Z=+2.5): runs x=0→19.2, has windows & garage door
+  Back wall (Z=-2.5):  runs x=0→19.2
+  Left wall (X=0):     short end
+  Right wall (X=19.2): main facade with garage
+  Interior axis walls at ax5, ax4, ax3, ax2 (partial)
+*/
+
+const ZF =  TOTAL_W / 2;   // front face Z = +2.5
+const ZB = -TOTAL_W / 2;   // back face  Z = -2.5
+
+// RIGHT FACADE (X = AX[1] = 19.2) — main street facade
+// Has: garage door (3.0m wide, full height-ish), main entrance door (1.2m), windows
+// Garage door: centre it on the right portion
+const garDoorW = 3.0, garDoorH = 2.8;
+const garDoorStart = (TOTAL_W - garDoorW) / 2;  // centred on 5m width
+
+wallWithOpening(grpFloor1,
+  AX[1], 0, TOTAL_W, F1H, WALL_T,
+  [
+    { start: garDoorStart, width: garDoorW, height: garDoorH, yOffset: 0 },   // garage opening
+    { start: 0.3, width: 1.0, height: 1.4, yOffset: 0.9 },                    // window left of garage
+  ],
+  Y_F1, true, COL.wall
+);
+
+// Garage door glass fill
+{
+  const m = box(WALL_T + 0.02, garDoorH, garDoorW, COL.glass, 0.35);
+  m.position.set(AX[1], Y_F1 + garDoorH / 2, ZB + garDoorStart + garDoorW / 2);
+  grpFloor1.add(m);
+}
+
+// FRONT WALL (Z = +ZF) — along length
+// Windows for living room, kitchen. Opening for front entrance
+wallWithOpening(grpFloor1,
+  0, ZF, TOTAL_L, F1H, WALL_T,
+  [
+    // living-room window (trục 2→3 zone): x~14.0→17.6 → offset from 0 = 14.0, width=2.0
+    { start: AX[2], width: 1.8, height: 1.5, yOffset: 0.9 },
+    // kitchen window
+    { start: AX[3] + 0.5, width: 1.5, height: 1.5, yOffset: 0.9 },
+    // small WC window back zone
+    { start: AX[5] + 0.3, width: 0.8, height: 0.8, yOffset: 1.5 },
+  ],
+  Y_F1, false, COL.wall
+);
+
+// BACK WALL (Z = -ZF)
+wallWithOpening(grpFloor1,
+  0, ZB, TOTAL_L, F1H, WALL_T,
+  [
+    // back door to yard (trục 4→5 zone)
+    { start: AX[4] + 0.5, width: 1.2, height: 2.2, yOffset: 0 },
+    // kitchen back window
+    { start: AX[3] + 0.8, width: 1.0, height: 1.2, yOffset: 1.0 },
+    // small window zone ax5→ax6
+    { start: AX[5] + 0.4, width: 0.8, height: 0.8, yOffset: 1.4 },
+  ],
+  Y_F1, false, COL.wall
+);
+
+// LEFT WALL (X = 0) — closed end
+addBox(grpFloor1,
+  WALL_T, F1H, TOTAL_W,
+  COL.wall,
+  WALL_T / 2, Y_F1 + F1H / 2, 0
+);
+
+// INTERIOR PARTITION at AX[2] (between garage/living): partial (not full height, has door)
+wallWithOpening(grpFloor1,
+  AX[2], 0, TOTAL_W, F1H, WALL_T,
+  [{ start: TOTAL_W / 2 - 0.5, width: 1.0, height: 2.2, yOffset: 0 }],
+  Y_F1, true, COL.interior
+);
+
+// INTERIOR PARTITION at AX[3] (living / kitchen):
+wallWithOpening(grpFloor1,
+  AX[3], 0, TOTAL_W, F1H, WALL_T,
+  [{ start: TOTAL_W / 2 - 0.5, width: 1.0, height: 2.2, yOffset: 0 }],
+  Y_F1, true, COL.interior
+);
+
+// INTERIOR PARTITION at AX[4] (kitchen / yard area):
+wallWithOpening(grpFloor1,
+  AX[4], 0, TOTAL_W, F1H, WALL_T,
+  [{ start: 0.5, width: 1.2, height: 2.2, yOffset: 0 }],
+  Y_F1, true, COL.interior
+);
+
+// INTERIOR at AX[5] (sân sau boundary)
+addBox(grpFloor1,
+  WALL_T, F1H, TOTAL_W,
+  COL.interior,
+  AX[5], Y_F1 + F1H / 2, 0
+);
+
+// Floor 1 windows (glass panes)
+function addWindowPane(group, isZAxis, wx, wz, w, h, yCenter, thickness = 0.04) {
+  const m = box(
+    isZAxis ? thickness : w,
+    h,
+    isZAxis ? w : thickness,
+    COL.glass, 0.55
+  );
+  m.position.set(wx, yCenter, wz);
+  group.add(m);
+}
+
+// Front wall windows
+addWindowPane(grpFloor1, false, AX[2] + 0.9,  ZF, 1.8, 1.5, Y_F1 + 0.9 + 0.75);
+addWindowPane(grpFloor1, false, AX[3] + 0.5 + 0.75, ZF, 1.5, 1.5, Y_F1 + 0.9 + 0.75);
+// Right wall window
+addWindowPane(grpFloor1, true,  AX[1], ZB + 0.3 + 0.5, 1.0, 1.4, Y_F1 + 0.9 + 0.7);
+
+// ─── FLOOR 2 SLAB ────────────────────────────────────────────────────────────
+addBox(grpSlab2,
+  TOTAL_L, SLAB_T, TOTAL_W,
+  COL.slab,
+  TOTAL_L / 2, Y_SLAB2 + SLAB_T / 2, 0
+);
+
+// Staircase void (thông tầng area) – just a darker shade cutout hint on slab
+// We simulate by adding a darker box on top of the slab around ax3→ax4
+addBox(grpSlab2,
+  AX[3] - AX[4], 0.02, 2.0,
+  0x999999,
+  (AX[3] + AX[4]) / 2, Y_SLAB2 + SLAB_T + 0.01, 0
+);
+
+// ─── FLOOR 2 WALLS ───────────────────────────────────────────────────────────
+// Front wall floor 2 — has large windows for master bedroom, balcony door
+wallWithOpening(grpFloor2,
+  0, ZF, TOTAL_L, F2H, WALL_T,
+  [
+    // Master bedroom large window (ax1→ax2 = 5.6m zone) — big window 2.4m
+    { start: AX[2] + 1.0, width: 2.4, height: 2.0, yOffset: 0.7 },
+    // Sinh hoạt window
+    { start: AX[3] + 0.5, width: 1.4, height: 1.5, yOffset: 0.8 },
+    // Balcony door (at right end, ax1 area)
+    { start: AX[2] + 0.2, width: 1.2, height: 2.4, yOffset: 0 },
+    // ngủ window
+    { start: AX[5] + 0.3, width: 1.0, height: 1.4, yOffset: 0.8 },
+  ],
+  Y_F2, false, COL.wall
+);
+
+// Back wall floor 2
+wallWithOpening(grpFloor2,
+  0, ZB, TOTAL_L, F2H, WALL_T,
+  [
+    // Master WC window
+    { start: AX[2] + 0.3, width: 0.8, height: 0.8, yOffset: 1.4 },
+    // ngủ back window
+    { start: AX[4] + 0.5, width: 1.2, height: 1.4, yOffset: 0.8 },
+    // làm việc window
+    { start: AX[3] + 0.3, width: 1.0, height: 1.4, yOffset: 0.8 },
+  ],
+  Y_F2, false, COL.wall
+);
+
+// Right facade floor 2 (above garage - becomes master bedroom facade)
+// Has large picture window + balcony opening
+wallWithOpening(grpFloor2,
+  AX[1], 0, TOTAL_W, F2H, WALL_T,
+  [
+    // large window for master
+    { start: 0.8, width: 3.4, height: 2.0, yOffset: 0.7 },
+  ],
+  Y_F2, true, COL.wall
+);
+
+// Left wall floor 2
+addBox(grpFloor2,
+  WALL_T, F2H, TOTAL_W,
+  COL.wall,
+  WALL_T / 2, Y_F2 + F2H / 2, 0
+);
+
+// Floor 2 interior partitions
+// AX[2] between master & sinh hoạt
+wallWithOpening(grpFloor2,
+  AX[2], 0, TOTAL_W, F2H, WALL_T,
+  [{ start: TOTAL_W / 2 - 0.5, width: 1.0, height: 2.2, yOffset: 0 }],
+  Y_F2, true, COL.interior
+);
+// AX[3] between sinh hoạt & làm việc/ngủ
+wallWithOpening(grpFloor2,
+  AX[3], 0, TOTAL_W, F2H, WALL_T,
+  [{ start: TOTAL_W / 2 - 0.5, width: 1.0, height: 2.2, yOffset: 0 }],
+  Y_F2, true, COL.interior
+);
+// AX[4] partial (cầu thang area)
+wallWithOpening(grpFloor2,
+  AX[4], 0, TOTAL_W, F2H, WALL_T,
+  [{ start: TOTAL_W / 2 - 0.5, width: 1.0, height: 2.2, yOffset: 0 }],
+  Y_F2, true, COL.interior
+);
+// AX[5]
+addBox(grpFloor2,
+  WALL_T, F2H, TOTAL_W,
+  COL.interior,
+  AX[5], Y_F2 + F2H / 2, 0
+);
+
+// Floor 2 windows
+// Front big master window
+addWindowPane(grpFloor2, false, AX[2] + 1.0 + 1.2, ZF, 2.4, 2.0, Y_F2 + 0.7 + 1.0);
+// Front sinh hoạt
+addWindowPane(grpFloor2, false, AX[3] + 0.5 + 0.7, ZF, 1.4, 1.5, Y_F2 + 0.8 + 0.75);
+// Front ngủ window
+addWindowPane(grpFloor2, false, AX[5] + 0.3 + 0.5, ZF, 1.0, 1.4, Y_F2 + 0.8 + 0.7);
+// Right facade master window
+addWindowPane(grpFloor2, true, AX[1], ZB + 0.8 + 1.7, 3.4, 2.0, Y_F2 + 0.7 + 1.0);
+// Balcony door pane
+addWindowPane(grpFloor2, false, AX[2] + 0.2 + 0.6, ZF, 1.2, 2.4, Y_F2 + 0 + 1.2);
+
+// ─── BALCONY FLOOR 2 ─────────────────────────────────────────────────────────
+// Protrudes BAL_OUT=0.9m from front face (Z=+ZF), width matches ax1→ax2 zone (5.6m)
+const balX1 = AX[2];
+const balX2 = AX[1];
+const balW  = balX2 - balX1;  // 5.6m
+const balZfront = ZF + BAL_OUT;
+
+// Balcony slab
+addBox(grpFloor2,
+  balW, BAL_T, BAL_OUT,
+  COL.slab,
+  (balX1 + balX2) / 2, Y_F2 - BAL_T / 2, ZF + BAL_OUT / 2
+);
+
+// Balcony railing (front bar)
+addBox(grpFloor2,
+  balW, RAIL_H, RAIL_T,
+  COL.railing,
+  (balX1 + balX2) / 2, Y_F2 - BAL_T + RAIL_H / 2, balZfront
+);
+
+// Balcony railing (side bars)
+addBox(grpFloor2,
+  RAIL_T, RAIL_H, BAL_OUT,
+  COL.railing,
+  balX1, Y_F2 - BAL_T + RAIL_H / 2, ZF + BAL_OUT / 2
+);
+addBox(grpFloor2,
+  RAIL_T, RAIL_H, BAL_OUT,
+  COL.railing,
+  balX2, Y_F2 - BAL_T + RAIL_H / 2, ZF + BAL_OUT / 2
+);
+
+// Vertical balusters (every ~0.4m)
+const balusterSpacing = 0.4;
+const nBalusters = Math.floor(balW / balusterSpacing);
+for (let i = 1; i < nBalusters; i++) {
+  const bx = balX1 + i * balusterSpacing;
+  addBox(grpFloor2,
+    RAIL_T, RAIL_H - BAL_T, RAIL_T,
+    COL.railing,
+    bx, Y_F2 - BAL_T + (RAIL_H - BAL_T) / 2, balZfront - 0.02
+  );
+}
+
+// ─── ROOF ────────────────────────────────────────────────────────────────────
+// Main flat roof slab
+addBox(grpRoof,
+  TOTAL_L, ROOF_T, TOTAL_W,
+  COL.slab,
+  TOTAL_L / 2, Y_ROOF + ROOF_T / 2, 0
+);
+
+// Parapet walls (low walls around roof perimeter)
+const parapetH = 0.5;
+const parapetT = 0.12;
+
+// Front parapet
+addBox(grpRoof, TOTAL_L, parapetH, parapetT, COL.wall,
+  TOTAL_L / 2, Y_ROOF + ROOF_T + parapetH / 2, ZF - parapetT / 2);
+// Back parapet
+addBox(grpRoof, TOTAL_L, parapetH, parapetT, COL.wall,
+  TOTAL_L / 2, Y_ROOF + ROOF_T + parapetH / 2, ZB + parapetT / 2);
+// Left parapet
+addBox(grpRoof, parapetT, parapetH, TOTAL_W, COL.wall,
+  parapetT / 2, Y_ROOF + ROOF_T + parapetH / 2, 0);
+// Right parapet
+addBox(grpRoof, parapetT, parapetH, TOTAL_W, COL.wall,
+  TOTAL_L - parapetT / 2, Y_ROOF + ROOF_T + parapetH / 2, 0);
+
+// ─── SKYLIGHTS ───────────────────────────────────────────────────────────────
+const skylightY = Y_ROOF + ROOF_T + 0.25 / 2;
+
+// Skylight 1: ~3.0×2.0m, zone ax4→ax5
+addBox(grpRoof,
+  3.0, 0.25, 2.0,
+  COL.skylight, 0.65,
+  (AX[4] + AX[5]) / 2, skylightY, 0
+);
+
+// Skylight 2: ~4.0×1.5m, zone ax3→ax4
+addBox(grpRoof,
+  3.5, 0.25, 1.5,
+  COL.skylight, 0.65,
+  (AX[3] + AX[4]) / 2, skylightY, ZB + 1.5 / 2 + 0.5
+);
+
+// Skylight frames
+function addSkylightFrame(group, cx, cy, cz, w, d) {
+  const ft = 0.06, fh = 0.30;
+  // 4 frame bars
+  addBox(group, w, fh, ft, COL.railing, cx, cy, cz - d / 2);
+  addBox(group, w, fh, ft, COL.railing, cx, cy, cz + d / 2);
+  addBox(group, ft, fh, d, COL.railing, cx - w / 2, cy, cz);
+  addBox(group, ft, fh, d, COL.railing, cx + w / 2, cy, cz);
+}
+addSkylightFrame(grpRoof, (AX[4] + AX[5]) / 2, Y_ROOF + ROOF_T + 0.15, 0, 3.05, 2.05);
+addSkylightFrame(grpRoof, (AX[3] + AX[4]) / 2, Y_ROOF + ROOF_T + 0.15, ZB + 1.5 / 2 + 0.5, 3.55, 1.55);
+
+// ─── STAIRCASE (simple visual) ───────────────────────────────────────────────
+const stairX = AX[3] + 0.2;
+const stairSteps = 18;
+const stepH = (F1H - SLAB_T) / stairSteps;
+const stepD = (TOTAL_W * 0.4) / stairSteps;
+for (let i = 0; i < stairSteps; i++) {
+  addBox(grpFloor1,
+    1.0, stepH, stepD,
+    COL.trim,
+    stairX + 0.5, Y_F1 + stepH * (i + 0.5), ZB + stepD * (i + 0.5) + 0.2
+  );
+}
+
+// ─── COLUMN ACCENTS ──────────────────────────────────────────────────────────
+// Decorative columns on the right facade
+function addColumn(group, cx, yBase, height, cz) {
+  addBox(group, 0.25, height, 0.25, COL.trim, cx, yBase + height / 2, cz);
+}
+// Columns on front facade at axis intersections
+[AX[2], AX[3], AX[4], AX[5]].forEach(ax => {
+  addColumn(grpFloor1, ax, Y_F1, F1H, ZF);
+  addColumn(grpFloor2, ax, Y_F2, F2H, ZF);
+});
+
+// ─── ROOM LABELS (CSS2D) ─────────────────────────────────────────────────────
+function makeLabel(text, x, y, z) {
+  const div = document.createElement('div');
+  div.className = 'room-label';
+  div.textContent = text;
+  const label = new THREE.CSS2DObject(div);
+  label.position.set(x, y, z);
+  grpLabels.add(label);
+  return label;
+}
+
+const midZ = 0;  // centre of width
+// Floor 1 labels
+makeLabel('🚗 Sân / Garage',    (AX[1] + AX[2]) / 2, Y_F1 + F1H / 2, midZ);
+makeLabel('🛋 Phòng khách',     (AX[2] + AX[3]) / 2, Y_F1 + F1H / 2, midZ);
+makeLabel('🍳 Bếp + Bàn ăn',   (AX[3] + AX[4]) / 2, Y_F1 + F1H / 2, midZ);
+makeLabel('🌿 Sân sau + WC',    (AX[4] + AX[5]) / 2, Y_F1 + F1H / 2, midZ);
+makeLabel('🌳 Sân mở rộng',    (AX[5] + AX[6]) / 2, Y_F1 + F1H / 2, midZ);
+// Floor 2 labels
+makeLabel('🛏 P. Master',       (AX[1] + AX[2]) / 2, Y_F2 + F2H / 2, midZ);
+makeLabel('🛋 Sinh hoạt',       (AX[2] + AX[3]) / 2, Y_F2 + F2H / 2, midZ);
+makeLabel('💼 Làm việc',        (AX[3] + AX[4]) / 2, Y_F2 + F2H / 2, midZ);
+makeLabel('🛏 P. Ngủ 1',        (AX[4] + AX[5]) / 2, Y_F2 + F2H / 2, midZ);
+makeLabel('☀ Skylight 1',      (AX[4] + AX[5]) / 2, Y_ROOF + ROOF_T + 0.6, 0.5);
+makeLabel('☀ Skylight 2',      (AX[3] + AX[4]) / 2, Y_ROOF + ROOF_T + 0.6, ZB + 1.5);
+
+// ─── DIMENSION GUIDE (axis lines) ────────────────────────────────────────────
+function addAxisLine(x1, x2, y, z, color) {
+  const points = [
+    new THREE.Vector3(x1, y, z),
+    new THREE.Vector3(x2, y, z),
+  ];
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color }));
+  scene.add(line);
+}
+
+const axY = -0.05;
+[AX[6], AX[5], AX[4], AX[3], AX[2], AX[1]].forEach((ax) => {
+  // vertical tick
+  addAxisLine(ax, ax, axY, ZF + 0.5, 0x666666);
+  addAxisLine(ax, ax, axY, ZB - 0.5, 0x666666);
+});
+
+// ─── UI FUNCTIONS ─────────────────────────────────────────────────────────────
+let labelsVisible   = true;
+let wireframeActive = false;
+
+function showFloor(mode) {
+  grpFloor1.visible = (mode === 'all' || mode === '1');
+  grpSlab2.visible  = (mode === 'all' || mode === '2');
+  grpFloor2.visible = (mode === 'all' || mode === '2');
+  grpRoof.visible   = (mode === 'all');
+  grpFoundYard.visible = (mode === 'all' || mode === '1');
+
+  document.getElementById('btn-all').classList.toggle('active',    mode === 'all');
+  document.getElementById('btn-floor1').classList.toggle('active', mode === '1');
+  document.getElementById('btn-floor2').classList.toggle('active', mode === '2');
+}
+
+function toggleLabels() {
+  labelsVisible = !labelsVisible;
+  grpLabels.visible = labelsVisible;
+  const btn = document.getElementById('btn-labels');
+  btn.classList.toggle('active', labelsVisible);
+}
+
+function toggleWireframe() {
+  wireframeActive = !wireframeActive;
+  grpAll.traverse(obj => {
+    if (obj.isMesh && obj.material) {
+      obj.material.wireframe = wireframeActive;
+    }
+  });
+  document.getElementById('btn-wireframe').classList.toggle('active', wireframeActive);
+}
+
+function resetCamera() {
+  camera.position.set(CAM_DEFAULT.x, CAM_DEFAULT.y, CAM_DEFAULT.z);
+  controls.target.set(TOTAL_L / 2, 4, 0);
+  controls.update();
+}
+
+// ─── RESIZE ──────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─── ANIMATE ─────────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
